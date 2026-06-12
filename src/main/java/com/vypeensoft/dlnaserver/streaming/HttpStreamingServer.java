@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.vypeensoft.dlnaserver.content.MediaCatalog;
 import com.vypeensoft.dlnaserver.model.MediaItem;
+import com.vypeensoft.dlnaserver.util.MimeTypeResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,6 +81,18 @@ public class HttpStreamingServer {
                 if (iface.isLoopback() || !iface.isUp() || iface.isVirtual()) {
                     continue;
                 }
+                
+                String displayName = iface.getDisplayName().toLowerCase();
+                String name = iface.getName().toLowerCase();
+                if (displayName.contains("virtualbox") || displayName.contains("vbox") ||
+                    displayName.contains("vmware") || displayName.contains("virtual") ||
+                    displayName.contains("hyper-v") || displayName.contains("wsl") ||
+                    displayName.contains("host-only") || displayName.contains("nordvpn") ||
+                    displayName.contains("tap") || displayName.contains("vpn") ||
+                    name.startsWith("veth") || name.startsWith("wsl")) {
+                    continue;
+                }
+
                 Enumeration<InetAddress> addresses = iface.getInetAddresses();
                 while (addresses.hasMoreElements()) {
                     InetAddress addr = addresses.nextElement();
@@ -98,6 +111,11 @@ public class HttpStreamingServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             String method = exchange.getRequestMethod();
+            String remoteAddr = exchange.getRemoteAddress().toString();
+            // Log every incoming request — if this line never appears when the TV tries to play,
+            // the problem is in DIDL-Lite (TV rejects before streaming). If it appears, HTTP is reachable.
+            log.info(">>> HTTP {} from {} URI={}", method, remoteAddr, exchange.getRequestURI());
+            log.info(">>> Request Headers: {}", exchange.getRequestHeaders());
             if (!"GET".equalsIgnoreCase(method) && !"HEAD".equalsIgnoreCase(method)) {
                 exchange.sendResponseHeaders(405, -1);
                 exchange.close();
@@ -142,10 +160,18 @@ public class HttpStreamingServer {
             exchange.getResponseHeaders().set("Accept-Ranges", "bytes");
             exchange.getResponseHeaders().set("Connection", "keep-alive");
             
-            // DLNA headers to satisfy DLNA requirements
-            exchange.getResponseHeaders().set("transferMode.dlna.org", "Streaming");
-            exchange.getResponseHeaders().set("contentFeatures.dlna.org", 
-                "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000");
+            // DLNA response headers — must exactly match what was advertised in DIDL-Lite protocolInfo.
+            // This mirrors MiniDLNA's response format, known to work with LG 47LA6200 (NetCast).
+            boolean isImg = mimeType != null && mimeType.startsWith("image/");
+            exchange.getResponseHeaders().set("transferMode.dlna.org",
+                    isImg ? "Interactive" : "Streaming");
+            String dlnaProfile = MimeTypeResolver.getDlnaProfile(mimeType);
+            String pnPart = (dlnaProfile != null && !dlnaProfile.isEmpty())
+                    ? "DLNA.ORG_PN=" + dlnaProfile + ";" : "";
+            String contentFeatures = isImg
+                    ? pnPart + "DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000"
+                    : pnPart + "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+            exchange.getResponseHeaders().set("contentFeatures.dlna.org", contentFeatures);
 
             long start = 0;
             long end = fileLength - 1;

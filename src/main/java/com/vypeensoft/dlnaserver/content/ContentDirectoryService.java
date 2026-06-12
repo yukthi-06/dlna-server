@@ -67,6 +67,7 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
                     didl.addItem(buildItem(item));
                 }
                 String xml = new DIDLParser().generate(didl);
+                log.info("[Browse METADATA] objectId={} → DIDL-Lite XML:\n{}", objectId, xml);
                 return new BrowseResult(xml, 1, 1);
 
             } else {
@@ -107,7 +108,8 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
                 }
 
                 String xml = new DIDLParser().generate(didl);
-                log.debug("Browse Response: returned count={}, total matches={}", count, totalMatches);
+                log.info("[Browse CHILDREN] objectId={} returned {}/{} items. DIDL-Lite XML:\n{}",
+                        objectId, count, totalMatches, xml);
                 return new BrowseResult(xml, count, totalMatches);
             }
 
@@ -137,13 +139,33 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
     private Item buildItem(MediaItem item) {
         String streamUrl = urlProvider.apply(item.id());
         String mimeType = item.mimeType();
-        String dlnaProfile = MimeTypeResolver.getDlnaProfile(mimeType);
 
-        String protocolInfoStr = "http-get:*:" + mimeType + ":DLNA.ORG_PN=" + dlnaProfile
-                + ";DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+        // Build protocolInfo matching MiniDLNA's format for LG NetCast (47LA6200 and similar).
+        // LG uses DLNA.ORG_PN to select the hardware decoder — '*' means unknown decoder → rejected.
+        // FLAGS=01700000 for AV (streaming transfer mode), 00D00000 for images (interactive mode).
+        String protocolInfoStr;
+        if (item.isImage()) {
+            // Images: OP=00 (no seek), interactive transfer, JPEG_LRG / PNG_LRG profile
+            String pn = MimeTypeResolver.getDlnaProfile(mimeType); // JPEG_LRG, PNG_LRG
+            protocolInfoStr = "http-get:*:" + mimeType + ":DLNA.ORG_PN=" + pn
+                    + ";DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000";
+        } else {
+            // Audio/Video: OP=01 (byte-range seek), streaming transfer
+            String pn = MimeTypeResolver.getDlnaProfile(mimeType);
+            if (pn != null && !pn.isEmpty()) {
+                protocolInfoStr = "http-get:*:" + mimeType + ":DLNA.ORG_PN=" + pn
+                        + ";DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+            } else {
+                // No known DLNA profile (MKV, AVI, MOV, FLAC) — omit PN, keep flags
+                protocolInfoStr = "http-get:*:" + mimeType
+                        + ":DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+            }
+        }
         ProtocolInfo protocolInfo = new ProtocolInfo(protocolInfoStr);
 
         Res res = new Res(protocolInfo, item.size(), streamUrl);
+        log.info("[BuildItem] title='{}' url='{}' mimeType='{}' size={} protocolInfo='{}'",
+                item.title(), streamUrl, mimeType, item.size(), protocolInfoStr);
 
         if (item.durationMs() > 0) {
             long totalSec = item.durationMs() / 1000;

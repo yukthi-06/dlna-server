@@ -32,18 +32,19 @@ public final class MimeTypeResolver {
         EXT_TO_MIME.put("jpeg", "image/jpeg");
         EXT_TO_MIME.put("png", "image/png");
 
-        // DLNA Profile Names (e.g. DLNA.ORG_PN)
-        MIME_TO_DLNA.put("video/mp4", "MP4_SP_AAC_L2");
-        MIME_TO_DLNA.put("video/x-matroska", "MKV");
-        MIME_TO_DLNA.put("video/x-msvideo", "AVI");
-        MIME_TO_DLNA.put("video/quicktime", "MOV");
-        MIME_TO_DLNA.put("audio/mpeg", "MP3");
-        MIME_TO_DLNA.put("audio/flac", "FLAC");
-        MIME_TO_DLNA.put("audio/wav", "LPCM");
-        MIME_TO_DLNA.put("audio/mp4", "AAC_ADTS");
-        MIME_TO_DLNA.put("audio/aac", "AAC_ADTS");
-        MIME_TO_DLNA.put("image/jpeg", "JPEG_LRG");
-        MIME_TO_DLNA.put("image/png", "PNG_LRG");
+        // DLNA Profile Names (DLNA.ORG_PN) — must use standardised profile IDs.
+        // Invalid profiles cause "format not supported" on DLNA TVs even for valid files.
+        MIME_TO_DLNA.put("video/mp4",          "AVC_MP4_MP_SD_AAC_MULT5"); // H.264/AAC in MP4
+        MIME_TO_DLNA.put("video/x-matroska",   "");   // MKV has no official DLNA profile → use wildcard
+        MIME_TO_DLNA.put("video/x-msvideo",    "");   // AVI has no official DLNA profile → use wildcard
+        MIME_TO_DLNA.put("video/quicktime",    "");   // MOV has no official DLNA profile → use wildcard
+        MIME_TO_DLNA.put("audio/mpeg",         "MP3");
+        MIME_TO_DLNA.put("audio/flac",         "");   // FLAC has no official DLNA PN → use wildcard
+        MIME_TO_DLNA.put("audio/wav",          "LPCM");
+        MIME_TO_DLNA.put("audio/mp4",          "AAC_ISO_320");
+        MIME_TO_DLNA.put("audio/aac",          "AAC_ADTS_320");
+        MIME_TO_DLNA.put("image/jpeg",         "JPEG_LRG");
+        MIME_TO_DLNA.put("image/png",          "PNG_LRG");
     }
 
     private MimeTypeResolver() {
