@@ -6,6 +6,7 @@ import com.vypeensoft.dlnaserver.dlna.DlnaMediaServer;
 import com.vypeensoft.dlnaserver.filesystem.FileWatcher;
 import com.vypeensoft.dlnaserver.filesystem.MediaScanner;
 import com.vypeensoft.dlnaserver.streaming.HttpStreamingServer;
+import com.vypeensoft.dlnaserver.util.DlnaProfileCycler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,12 +39,24 @@ public class Application {
 
         File mediaDir = new File(mediaPath);
         MediaCatalog catalog = new MediaCatalog();
-        
+
+        // Profile cycler — discovers the correct DLNA protocolInfo for this TV automatically.
+        // On each click on an MP4, the next candidate profile is tried. When the TV accepts
+        // (issues a GET request), the winner is logged to dlna_profile_winner.log.
+        DlnaProfileCycler cycler = new DlnaProfileCycler();
+        String winner = cycler.loadWinner();
+        if (winner != null) {
+            log.info("Profile cycler: using previously saved winner profile. Will be tried on first click.");
+        } else {
+            log.info("Profile cycler: {} candidate profiles loaded. Click an MP4 on the TV to cycle.",
+                    DlnaProfileCycler.CANDIDATES.size());
+        }
+
         // HTTP Server Setup
-        HttpStreamingServer streamingServer = new HttpStreamingServer(port, catalog);
-        
+        HttpStreamingServer streamingServer = new HttpStreamingServer(port, catalog, cycler);
+
         // DLNA Server Setup
-        DlnaMediaServer dlnaServer = new DlnaMediaServer(name, catalog, streamingServer::getStreamUrl);
+        DlnaMediaServer dlnaServer = new DlnaMediaServer(name, catalog, streamingServer::getStreamUrl, cycler);
 
         // Initial Scan
         MediaScanner scanner = new MediaScanner(catalog, mediaDir);

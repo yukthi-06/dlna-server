@@ -1,6 +1,9 @@
 package com.vypeensoft.dlnaserver.util;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -12,6 +15,21 @@ public final class MimeTypeResolver {
 
     private static final Map<String, String> EXT_TO_MIME = new HashMap<>();
     private static final Map<String, String> MIME_TO_DLNA = new HashMap<>();
+
+    /**
+     * Ordered list of DLNA.ORG_PN profiles for video/mp4, from highest to lowest priority.
+     * LG NetCast TVs (e.g. 47LA6200) require multiple &lt;res&gt; elements, each with a different
+     * profile, so the TV can select the decoder it recognises. Mirrors MiniDLNA LG behaviour.
+     * Priority order:
+     *   1. AVC_MP4_MP_HD_1080i_AAC  – H.264 Main Profile, Full HD, AAC stereo
+     *   2. AVC_MP4_MP_HD_720p_AAC  – H.264 Main Profile, 720p, AAC stereo
+     *   3. AVC_MP4_BL_L3L_SD_AAC   – H.264 Baseline Level 3 Low, SD, AAC (broadest compat)
+     */
+    public static final List<String> VIDEO_MP4_PROFILES = Collections.unmodifiableList(Arrays.asList(
+            "AVC_MP4_MP_HD_1080i_AAC",
+            "AVC_MP4_MP_HD_720p_AAC",
+            "AVC_MP4_BL_L3L_SD_AAC"
+    ));
 
     static {
         // Videos
@@ -34,7 +52,7 @@ public final class MimeTypeResolver {
 
         // DLNA Profile Names (DLNA.ORG_PN) — must use standardised profile IDs.
         // Invalid profiles cause "format not supported" on DLNA TVs even for valid files.
-        MIME_TO_DLNA.put("video/mp4",          "AVC_MP4_MP_SD_AAC_MULT5"); // H.264/AAC in MP4
+        // NOTE: video/mp4 uses VIDEO_MP4_PROFILES list (multiple res elements) — not a single entry here.
         MIME_TO_DLNA.put("video/x-matroska",   "");   // MKV has no official DLNA profile → use wildcard
         MIME_TO_DLNA.put("video/x-msvideo",    "");   // AVI has no official DLNA profile → use wildcard
         MIME_TO_DLNA.put("video/quicktime",    "");   // MOV has no official DLNA profile → use wildcard
@@ -99,8 +117,22 @@ public final class MimeTypeResolver {
 
     /**
      * Gets the DLNA profile/org-pn mapping for a MIME type.
+     * For video/mp4, returns the first (highest-priority) profile from VIDEO_MP4_PROFILES.
+     * Use {@link #getVideoMp4Profiles()} when building multi-res DIDL for LG TVs.
      */
     public static String getDlnaProfile(String mimeType) {
+        if ("video/mp4".equals(mimeType)) {
+            return VIDEO_MP4_PROFILES.get(0);
+        }
         return MIME_TO_DLNA.getOrDefault(mimeType, "*");
+    }
+
+    /**
+     * Returns the ordered list of DLNA.ORG_PN profiles for video/mp4.
+     * Used to emit multiple &lt;res&gt; elements in DIDL-Lite so that LG NetCast TVs
+     * (e.g. 47LA6200) can select the hardware decoder they support.
+     */
+    public static List<String> getVideoMp4Profiles() {
+        return VIDEO_MP4_PROFILES;
     }
 }

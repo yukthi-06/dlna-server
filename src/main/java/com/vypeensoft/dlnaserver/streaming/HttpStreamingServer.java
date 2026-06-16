@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.vypeensoft.dlnaserver.content.MediaCatalog;
 import com.vypeensoft.dlnaserver.model.MediaItem;
+import com.vypeensoft.dlnaserver.util.DlnaProfileCycler;
 import com.vypeensoft.dlnaserver.util.MimeTypeResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,12 +29,14 @@ public class HttpStreamingServer {
 
     private final int port;
     private final MediaCatalog catalog;
+    private final DlnaProfileCycler cycler;
     private HttpServer server;
     private String hostAddress;
 
-    public HttpStreamingServer(int port, MediaCatalog catalog) {
+    public HttpStreamingServer(int port, MediaCatalog catalog, DlnaProfileCycler cycler) {
         this.port = port;
         this.catalog = catalog;
+        this.cycler = cycler;
         this.hostAddress = resolveHostAddress();
     }
 
@@ -163,15 +166,34 @@ public class HttpStreamingServer {
             // DLNA response headers — must exactly match what was advertised in DIDL-Lite protocolInfo.
             // This mirrors MiniDLNA's response format, known to work with LG 47LA6200 (NetCast).
             boolean isImg = mimeType != null && mimeType.startsWith("image/");
+            boolean isMp4 = "video/mp4".equals(mimeType);
             exchange.getResponseHeaders().set("transferMode.dlna.org",
                     isImg ? "Interactive" : "Streaming");
-            String dlnaProfile = MimeTypeResolver.getDlnaProfile(mimeType);
-            String pnPart = (dlnaProfile != null && !dlnaProfile.isEmpty())
-                    ? "DLNA.ORG_PN=" + dlnaProfile + ";" : "";
-            String contentFeatures = isImg
-                    ? pnPart + "DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000"
-                    : pnPart + "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+            String contentFeatures;
+            if (isMp4) {
+                // Mirror whatever the cycler last advertised to the TV in DIDL-Lite BROWSE
+                String candidate = cycler.getCurrentCandidate();
+                contentFeatures = candidate.isEmpty() ? "*" : candidate;
+            } else {
+                String dlnaProfile = MimeTypeResolver.getDlnaProfile(mimeType);
+                String pnPart = (dlnaProfile != null && !dlnaProfile.isEmpty() && !"*".equals(dlnaProfile))
+                        ? "DLNA.ORG_PN=" + dlnaProfile + ";" : "";
+                contentFeatures = isImg
+                        ? pnPart + "DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000"
+                        : pnPart + "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+            }
             exchange.getResponseHeaders().set("contentFeatures.dlna.org", contentFeatures);
+            // realTimeInfo.dlna.org is required by LG NetCast (47LA6200 and similar) for streaming
+            // video/audio. Without it some firmware versions stall or report "unsupported" at handshake.
+            if (!isImg) {
+                exchange.getResponseHeaders().set("realTimeInfo.dlna.org", "DLNA.ORG_TLAG=*");
+            }
+
+            // Notify the cycler that the TV issued a GET for this item — it accepted the profile.
+            // This triggers the winner to be logged (only once per advance cycle).
+            if (isMp4 && "GET".equalsIgnoreCase(method)) {
+                cycler.notifySuccess();
+            }
 
             long start = 0;
             long end = fileLength - 1;

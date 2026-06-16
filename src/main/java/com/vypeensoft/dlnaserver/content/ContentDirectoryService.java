@@ -2,6 +2,7 @@ package com.vypeensoft.dlnaserver.content;
 
 import com.vypeensoft.dlnaserver.model.MediaContainer;
 import com.vypeensoft.dlnaserver.model.MediaItem;
+import com.vypeensoft.dlnaserver.util.DlnaProfileCycler;
 import com.vypeensoft.dlnaserver.util.MimeTypeResolver;
 import org.jupnp.model.types.ErrorCode;
 import org.jupnp.support.contentdirectory.AbstractContentDirectoryService;
@@ -36,10 +37,13 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
 
     private final MediaCatalog catalog;
     private final Function<String, String> urlProvider;
+    private final DlnaProfileCycler cycler;
 
-    public ContentDirectoryService(MediaCatalog catalog, Function<String, String> urlProvider) {
+    public ContentDirectoryService(MediaCatalog catalog, Function<String, String> urlProvider,
+                                   DlnaProfileCycler cycler) {
         this.catalog = catalog;
         this.urlProvider = urlProvider;
+        this.cycler = cycler;
     }
 
     @Override
@@ -64,7 +68,9 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
                     MediaItem item = catalog.getItem(objectId)
                             .orElseThrow(() -> new ContentDirectoryException(
                                     ErrorCode.ACTION_FAILED, "Item not found: " + objectId));
-                    didl.addItem(buildItem(item));
+                    // BROWSE METADATA for a specific item = user clicked on it.
+                    // Advance the cycler so a fresh candidate profile is tried on this play attempt.
+                    didl.addItem(buildItem(item, true));
                 }
                 String xml = new DIDLParser().generate(didl);
                 log.info("[Browse METADATA] objectId={} → DIDL-Lite XML:\n{}", objectId, xml);
@@ -87,7 +93,7 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
 
                 List<Item> subItems = new ArrayList<>();
                 for (String childId : currentContainer.getChildItemIds()) {
-                    catalog.getItem(childId).ifPresent(i -> subItems.add(buildItem(i)));
+                    catalog.getItem(childId).ifPresent(i -> subItems.add(buildItem(i, false)));
                 }
 
                 int totalMatches = subContainers.size() + subItems.size();
@@ -136,9 +142,51 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
         return folder;
     }
 
-    private Item buildItem(MediaItem item) {
+    /**
+     * Builds a UPnP Item from a MediaItem.
+     *
+     * @param item    the media item
+     * @param advance if {@code true} and the item is video/mp4, advance the profile cycler
+     *                (called on BROWSE METADATA = user clicked to play); if {@code false},
+     *                use the current candidate without advancing (called on folder listing).
+     */
+    private Item buildItem(MediaItem item, boolean advance) {
         String streamUrl = urlProvider.apply(item.id());
         String mimeType = item.mimeType();
+
+        String id = item.id();
+        String parentId = item.parentId();
+        String title = item.title();
+        final String creator = "Java DLNA Server";
+
+        if (item.isVideo() && "video/mp4".equals(mimeType)) {
+            // Cycle through DLNA profiles so the TV can find one it accepts.
+            // advance=true when user clicked the item (BROWSE METADATA), so we try the next profile.
+            // advance=false when listing the folder (BROWSE DIRECT_CHILDREN), so we show the current one.
+            String protocolInfoStr = advance ? cycler.advanceAndGet() : cycler.getCurrentProtocolInfo();
+
+            ProtocolInfo protocolInfo = new ProtocolInfo(protocolInfoStr);
+            Res res = new Res(protocolInfo, item.size(), streamUrl);
+            if (item.durationMs() > 0) {
+                long totalSec = item.durationMs() / 1000;
+                long hours = totalSec / 3600;
+                long minutes = (totalSec % 3600) / 60;
+                long seconds = totalSec % 60;
+                res.setDuration(String.format("%02d:%02d:%02d.000", hours, minutes, seconds));
+            }
+
+            VideoItem vi = new VideoItem();
+            vi.setId(id);
+            vi.setParentID(parentId);
+            vi.setTitle(title);
+            vi.setCreator(creator);
+            vi.addResource(res);
+            log.info("[BuildItem-MP4-Cycler] title='{}' advance={} protocolInfo='{}'",
+                    title, advance, protocolInfoStr);
+            return vi;
+        }
+
+        // --- All other MIME types: single <res> element ---
 
         // Build protocolInfo matching MiniDLNA's format for LG NetCast (47LA6200 and similar).
         // LG uses DLNA.ORG_PN to select the hardware decoder — '*' means unknown decoder → rejected.
@@ -150,9 +198,9 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
             protocolInfoStr = "http-get:*:" + mimeType + ":DLNA.ORG_PN=" + pn
                     + ";DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000";
         } else {
-            // Audio/Video: OP=01 (byte-range seek), streaming transfer
+            // Audio/Video non-MP4: OP=01 (byte-range seek), streaming transfer
             String pn = MimeTypeResolver.getDlnaProfile(mimeType);
-            if (pn != null && !pn.isEmpty()) {
+            if (pn != null && !pn.isEmpty() && !"*".equals(pn)) {
                 protocolInfoStr = "http-get:*:" + mimeType + ":DLNA.ORG_PN=" + pn
                         + ";DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
             } else {
@@ -174,11 +222,6 @@ public class ContentDirectoryService extends AbstractContentDirectoryService {
             long seconds = totalSec % 60;
             res.setDuration(String.format("%02d:%02d:%02d.000", hours, minutes, seconds));
         }
-
-        String id = item.id();
-        String parentId = item.parentId();
-        String title = item.title();
-        final String creator = "Java DLNA Server";
 
         if (item.isVideo()) {
             VideoItem vi = new VideoItem();

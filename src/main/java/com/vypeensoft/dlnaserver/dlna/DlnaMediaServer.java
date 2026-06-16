@@ -2,6 +2,7 @@ package com.vypeensoft.dlnaserver.dlna;
 
 import com.vypeensoft.dlnaserver.content.ContentDirectoryService;
 import com.vypeensoft.dlnaserver.content.MediaCatalog;
+import com.vypeensoft.dlnaserver.util.DlnaProfileCycler;
 import org.jupnp.DefaultUpnpServiceConfiguration;
 import org.jupnp.UpnpService;
 import org.jupnp.UpnpServiceImpl;
@@ -28,13 +29,16 @@ public class DlnaMediaServer {
     private final String serverName;
     private final MediaCatalog catalog;
     private final Function<String, String> urlProvider;
+    private final DlnaProfileCycler cycler;
     private UpnpService upnpService;
     private LocalDevice localDevice;
 
-    public DlnaMediaServer(String serverName, MediaCatalog catalog, Function<String, String> urlProvider) {
+    public DlnaMediaServer(String serverName, MediaCatalog catalog,
+                           Function<String, String> urlProvider, DlnaProfileCycler cycler) {
         this.serverName = serverName;
         this.catalog = catalog;
         this.urlProvider = urlProvider;
+        this.cycler = cycler;
     }
 
     /**
@@ -63,7 +67,7 @@ public class DlnaMediaServer {
         cds.setManager(new DefaultServiceManager<>(cds, ContentDirectoryService.class) {
             @Override
             protected ContentDirectoryService createServiceInstance() {
-                return new ContentDirectoryService(catalog, urlProvider);
+                return new ContentDirectoryService(catalog, urlProvider, cycler);
             }
         });
 
